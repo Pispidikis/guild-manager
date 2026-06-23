@@ -1,19 +1,514 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
-  provider = "prisma-client"
-  output   = "../app/generated/prisma"
+  provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
 }
 
-model TestConnection {
-  id        String   @id @default(cuid())
-  name      String
+/**
+ * =========================
+ * AUTH.JS MODELS
+ * =========================
+ */
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+
+  accounts Account[]
+  sessions Session[]
+
+  guildsOwned   Guild[]        @relation("GuildOwner")
+  memberships   GuildMember[]
+  notifications Notification[]
+
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+/**
+ * =========================
+ * CORE
+ * =========================
+ */
+
+model Guild {
+  id          String  @id @default(cuid())
+  name        String
+  slug        String  @unique
+  description String?
+  imageUrl    String?
+
+  // Informational reference only.
+  // NEVER use ownerId for authorization checks.
+  // Authorization must always use:
+  // User -> GuildMember -> Role -> RolePermission -> Permission
+  ownerId String
+  owner   User   @relation("GuildOwner", fields: [ownerId], references: [id])
+
+  members           GuildMember[]
+  invites           GuildInvite[]
+  roles             Role[]
+  modules           GuildModule[]
+  notifications     Notification[]
+  externalResources ExternalResource[]
+  auditLogs         AuditLog[]
+  activityLogs      ActivityLog[]
+
+  characters Character[]
+  questLogs  QuestLog[]
+  vodItems   VodItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deletedAt   DateTime?
+  deletedById String?
+  deletedBy   GuildMember? @relation("GuildDeletedBy", fields: [deletedById], references: [id])
+
+  @@index([ownerId])
+  @@index([deletedAt])
+}
+
+model GuildMember {
+  id      String  @id @default(cuid())
+  guildId String
+  userId  String
+  roleId  String?
+
+  displayName String?
+  status      GuildMemberStatus @default(ACTIVE)
+
+  joinedAt DateTime  @default(now())
+  leftAt   DateTime?
+
+  guild Guild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role  Role? @relation(fields: [roleId], references: [id], onDelete: SetNull)
+
+  characters Character[]
+
+  questLogsCreated  QuestLog[] @relation("QuestLogCreatedBy")
+  questLogsDeleted  QuestLog[] @relation("QuestLogDeletedBy")
+  questLogsAssigned QuestLog[] @relation("QuestLogAssignedTo")
+
+  vodItemsCreated VodItem[] @relation("VodItemCreatedBy")
+  vodItemsDeleted VodItem[] @relation("VodItemDeletedBy")
+
+  invitesCreated GuildInvite[] @relation("GuildInviteCreatedBy")
+
+  notifications Notification[]
+
+  externalResourcesCreated ExternalResource[] @relation("ExternalResourceCreatedBy")
+  externalResourcesDeleted ExternalResource[] @relation("ExternalResourceDeletedBy")
+
+  auditLogsActor    AuditLog[]    @relation("AuditActor")
+  activityLogsActor ActivityLog[] @relation("ActivityActor")
+
+  guildsDeleted Guild[] @relation("GuildDeletedBy")
+  rolesDeleted  Role[]  @relation("RoleDeletedBy")
+
+  modulesEnabled GuildModule[] @relation("GuildModuleEnabledBy")
+
+  charactersDeleted Character[]   @relation("CharacterDeletedBy")
+  membersDeleted    GuildMember[] @relation("GuildMemberDeletedBy")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deletedAt   DateTime?
+  deletedById String?
+  deletedBy   GuildMember? @relation("GuildMemberDeletedBy", fields: [deletedById], references: [id])
+
+  @@unique([guildId, userId])
+  @@index([guildId])
+  @@index([userId])
+  @@index([roleId])
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model GuildInvite {
+  id      String @id @default(cuid())
+  guildId String
+
+  email String?
+  token String  @unique
+
+  maxUses   Int?
+  usedCount Int  @default(0)
+
+  createdById String
+  createdBy   GuildMember @relation("GuildInviteCreatedBy", fields: [createdById], references: [id])
+
+  status GuildInviteStatus @default(PENDING)
+
+  expiresAt DateTime?
+  revokedAt DateTime?
+
+  guild Guild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([guildId])
+  @@index([createdById])
+  @@index([status])
+  @@index([expiresAt])
+  @@index([revokedAt])
+}
+
+model Role {
+  id      String @id @default(cuid())
+  guildId String
+
+  name        String
+  key         String
+  description String?
+  priority    Int     @default(0)
+
+  isDefault Boolean @default(false)
+  isSystem  Boolean @default(false)
+
+  guild Guild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  members         GuildMember[]
+  rolePermissions RolePermission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deletedAt   DateTime?
+  deletedById String?
+  deletedBy   GuildMember? @relation("RoleDeletedBy", fields: [deletedById], references: [id])
+
+  @@unique([guildId, name])
+  @@unique([guildId, key])
+  @@index([guildId])
+  @@index([priority])
+  @@index([deletedAt])
+}
+
+model Permission {
+  id          String  @id @default(cuid())
+  key         String  @unique
+  category    String
+  description String?
+
+  rolePermissions RolePermission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([category])
+}
+
+model RolePermission {
+  id           String @id @default(cuid())
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+}
+
+model GuildModule {
+  id        String @id @default(cuid())
+  guildId   String
+  moduleKey String
+
+  enabled Boolean @default(true)
+
+  enabledAt   DateTime?
+  enabledById String?
+  enabledBy   GuildMember? @relation("GuildModuleEnabledBy", fields: [enabledById], references: [id], onDelete: SetNull)
+
+  guild Guild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([guildId, moduleKey])
+  @@index([guildId])
+  @@index([moduleKey])
+  @@index([enabledById])
+  @@index([enabled])
+}
+
+model Notification {
+  id       String  @id @default(cuid())
+  guildId  String
+  userId   String?
+  memberId String?
+
+  type    String
+  title   String
+  message String?
+  readAt  DateTime?
+
+  guild  Guild        @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  user   User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  member GuildMember? @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([guildId])
+  @@index([userId])
+  @@index([memberId])
+  @@index([readAt])
+}
+
+model ExternalResource {
+  id      String @id @default(cuid())
+  guildId String
+
+  title       String
+  url         String
+  description String?
+  type        String?
+
+  guild Guild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  createdById String
+  createdBy   GuildMember @relation("ExternalResourceCreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deletedAt   DateTime?
+  deletedById String?
+  deletedBy   GuildMember? @relation("ExternalResourceDeletedBy", fields: [deletedById], references: [id])
+
+  @@index([guildId])
+  @@index([createdById])
+  @@index([deletedAt])
+}
+
+model AuditLog {
+  id      String @id @default(cuid())
+  guildId String
+
+  actorId String?
+  actor   GuildMember? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  action     String
+  entityType String
+  entityId   String?
+
+  metadata Json?
+
+  guild Guild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([guildId])
+  @@index([actorId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+model ActivityLog {
+  id      String @id @default(cuid())
+  guildId String
+
+  actorId String?
+  actor   GuildMember? @relation("ActivityActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  type    String
+  message String?
+  data    Json?
+
+  guild Guild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([guildId])
+  @@index([actorId])
+  @@index([createdAt])
+}
+
+/**
+ * =========================
+ * MVP MODULES
+ * =========================
+ */
+
+model Character {
+  id       String @id @default(cuid())
+  guildId  String
+  memberId String
+
+  name            String
+  class           String?
+  primaryWeapon   String?
+  secondaryWeapon String?
+
+  level     Int?
+  gearScore Int?
+  isMain    Boolean @default(false)
+
+  guild  Guild       @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  member GuildMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  questLogs QuestLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deletedAt   DateTime?
+  deletedById String?
+  deletedBy   GuildMember? @relation("CharacterDeletedBy", fields: [deletedById], references: [id])
+
+  @@unique([memberId, name])
+  @@index([guildId])
+  @@index([memberId])
+  @@index([name])
+  @@index([deletedAt])
+}
+
+model QuestLog {
+  id      String @id @default(cuid())
+  guildId String
+
+  title       String
+  description String?
+  status      QuestLogStatus   @default(OPEN)
+  priority    QuestLogPriority @default(NORMAL)
+
+  characterId  String?
+  assignedToId String?
+  createdById  String
+
+  guild Guild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  character  Character?   @relation(fields: [characterId], references: [id], onDelete: SetNull)
+  assignedTo GuildMember? @relation("QuestLogAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdBy  GuildMember  @relation("QuestLogCreatedBy", fields: [createdById], references: [id])
+
+  dueAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deletedAt   DateTime?
+  deletedById String?
+  deletedBy   GuildMember? @relation("QuestLogDeletedBy", fields: [deletedById], references: [id])
+
+  @@index([guildId])
+  @@index([characterId])
+  @@index([assignedToId])
+  @@index([createdById])
+  @@index([status])
+  @@index([priority])
+  @@index([deletedAt])
+}
+
+model VodItem {
+  id      String @id @default(cuid())
+  guildId String
+
+  title        String
+  url          String
+  description  String?
+  provider     String?
+  thumbnailUrl String?
+
+  createdById String
+  createdBy   GuildMember @relation("VodItemCreatedBy", fields: [createdById], references: [id])
+
+  guild Guild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deletedAt   DateTime?
+  deletedById String?
+  deletedBy   GuildMember? @relation("VodItemDeletedBy", fields: [deletedById], references: [id])
+
+  @@index([guildId])
+  @@index([createdById])
+  @@index([deletedAt])
+}
+
+/**
+ * =========================
+ * ENUMS
+ * =========================
+ */
+
+enum GuildMemberStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+  LEFT
+}
+
+enum GuildInviteStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+enum QuestLogStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum QuestLogPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
 }
